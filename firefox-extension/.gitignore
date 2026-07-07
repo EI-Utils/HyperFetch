@@ -1,0 +1,6 @@
+# web-ext / signing artifacts (generated locally, do not commit)
+node_modules/
+web-ext-artifacts/
+
+# The signed add-on is a build artifact; distribute it via releases, not source.
+hyperfetch.xpi

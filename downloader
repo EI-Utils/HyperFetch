@@ -1,0 +1,1140 @@
+#!/usr/bin/env python3
+"""Simple multithreaded HTTP downloader with range-request support."""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import math
+import os
+import queue
+import re
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, unquote, quote, urlparse
+from urllib.request import Request, urlopen
+
+PROGRESS_JSON = False
+_LAST_JSON_EMIT = 0.0
+
+# ANSI color codes
+class Colors:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    RED = "\033[31m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    DIM = "\033[2m"
+    NORMAL = "\033[22m"
+
+def colored(text: str, color: str) -> str:
+    """Return text wrapped with color codes."""
+    return f"{color}{text}{Colors.RESET}"
+
+def label(text: str) -> str:
+    """Format label text as dim (dark)."""
+    return colored(text, Colors.DIM)
+
+def info(text: str) -> str:
+    """Format info message in cyan."""
+    return colored(text, Colors.CYAN)
+
+def success(text: str) -> str:
+    """Format success message in green."""
+    return colored(text, Colors.GREEN)
+
+def warning(text: str) -> str:
+    """Format warning message in yellow."""
+    return colored(text, Colors.YELLOW)
+
+def error(text: str) -> str:
+    """Format error message in red."""
+    return colored(text, Colors.RED)
+
+def highlight(text: str) -> str:
+    """Format highlighted message in bold cyan."""
+    return colored(text, Colors.BOLD + Colors.CYAN)
+
+
+@dataclass
+class RemoteInfo:
+    content_length: Optional[int]
+    accept_ranges: bool
+    filename: str
+
+
+class DownloadError(Exception):
+    pass
+
+
+class AuthenticationRequiredError(DownloadError):
+    pass
+
+
+class InvalidTokenError(DownloadError):
+    pass
+
+
+class DownloadInterruptedError(DownloadError):
+    pass
+
+
+class Progress:
+    def __init__(self, total_bytes: Optional[int]) -> None:
+        self.total_bytes = total_bytes
+        self.downloaded = 0
+        self.lock = threading.Lock()
+        self.started = time.time()
+        self.samples: list[tuple[float, int]] = [(self.started, 0)]
+
+    def add(self, n: int) -> None:
+        with self.lock:
+            self.downloaded = max(0, self.downloaded + n)
+            now = time.time()
+            self.samples.append((now, self.downloaded))
+
+            cutoff = now - 3.0
+            while len(self.samples) > 2 and self.samples[1][0] < cutoff:
+                self.samples.pop(0)
+
+    def snapshot(self) -> Tuple[int, float]:
+        with self.lock:
+            downloaded = self.downloaded
+            oldest_time, oldest_downloaded = self.samples[0]
+            newest_time, newest_downloaded = self.samples[-1]
+
+        elapsed = max(newest_time - oldest_time, 1e-6)
+        speed = max(0.0, (newest_downloaded - oldest_downloaded) / elapsed)
+        return downloaded, speed
+
+    def elapsed_seconds(self) -> float:
+        return max(time.time() - self.started, 1e-6)
+
+
+class Downloader:
+    # Chrome User-Agent for compatibility with servers that block unknown clients
+    USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    def __init__(
+        self,
+        url: str,
+        output: Path,
+        threads: int,
+        chunk_size: int,
+        timeout: int,
+        retries: int,
+        auth_headers: Optional[dict[str, str]] = None,
+        cookies: Optional[str] = None,
+        referer: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> None:
+        self.url = url
+        self.output = output
+        self.threads = max(1, threads)
+        self.chunk_size = max(4096, chunk_size)
+        self.timeout = timeout
+        self.retries = retries
+        self.auth_headers = auth_headers or {}
+        self.cookies = cookies
+        self.referer = referer
+        self.user_agent = user_agent.strip() if isinstance(user_agent, str) and user_agent.strip() else None
+
+    def _build_request_headers(self, extra_headers: Optional[dict[str, str]] = None) -> dict[str, str]:
+        """Build request headers with User-Agent, cookies, and any extra headers."""
+        headers = {"User-Agent": self.user_agent or self.USER_AGENT}
+        headers.update(self.auth_headers)
+        # Add Cookie header if we have cookies
+        if self.cookies:
+            headers["Cookie"] = self.cookies
+        if self.referer:
+            headers["Referer"] = self.referer
+        if extra_headers:
+            headers.update(extra_headers)
+        return headers
+
+    def run(self) -> None:
+        remote = self._probe_remote()
+        if self.output.is_dir():
+            self.output = self.output / remote.filename
+        elif self.output.suffix.lower() == '.aspx' and remote.filename and not remote.filename.lower().endswith('.aspx'):
+            # Output was derived from the URL (e.g. "download.aspx") but the server's
+            # Content-Disposition header reveals the real filename.
+            self.output = self.output.parent / remote.filename
+            if not PROGRESS_JSON:
+                print(info(f"Correcting filename to: {remote.filename}"))
+
+        print(f"{label('URL:')} {self.url}")
+        print(f"{label('Output:')} {self.output}")
+        print(f"{label('Remote file:')} {remote.filename}")
+        if remote.content_length is not None:
+            print(f"{label('File size:')} {format_bytes(remote.content_length)}")
+        else:
+            print(f"{label('File size:')} unknown")
+
+        if (
+            self.threads == 1
+            or not remote.accept_ranges
+            or remote.content_length is None
+            or remote.content_length == 0
+        ):
+            if self.threads > 1 and not remote.accept_ranges:
+                print(warning("Server does not support byte ranges. Falling back to single-thread download."))
+            elif self.threads > 1 and remote.content_length is None:
+                print(warning("Server did not provide content length. Falling back to single-thread download."))
+            self._single_download(remote.content_length)
+            return
+
+        self._parallel_download(remote.content_length)
+
+    def _probe_remote(self) -> RemoteInfo:
+        parsed = urlparse(self.url)
+        default_name = Path(parsed.path).name or "download.bin"
+
+        # For SharePoint download.aspx?UniqueId=... URLs, decide between two endpoints:
+        #   * download.aspx  — supports Range requests (returns 206), so it can be downloaded
+        #     multithreaded. Authenticates fine for THIS client because we replay the browser's
+        #     FedAuth cookie (a raw HTTP client is not bound by SameSite).
+        #   * REST /$value   — reliable auth for cross-user OneDrive sharing, BUT commonly IGNORES
+        #     the Range header and returns 200 with the whole file, forcing a slow single-thread
+        #     download.
+        # So probe download.aspx for range support FIRST and keep it when it returns 206; only
+        # fall back to the REST endpoint if download.aspx is unusable (HTML/auth failure or no
+        # range support). This is what restores multithreaded speed for SharePoint/OneDrive.
+        if 'sharepoint.com' in parsed.netloc and 'download.aspx' in parsed.path:
+            aspx_supports_ranges = False
+            try:
+                req_aspx = Request(
+                    self.url,
+                    method="GET",
+                    headers=self._build_request_headers({"Range": "bytes=0-0"}),
+                )
+                with urlopen(req_aspx, timeout=self.timeout) as resp:
+                    ct = (resp.headers.get("Content-Type", "") or "").lower()
+                    status = getattr(resp, "status", None)
+                    if "text/html" not in ct and status == 206:
+                        aspx_supports_ranges = True
+                    if PROGRESS_JSON:
+                        import sys
+                        print(json.dumps({"_debug": "sharepoint_aspx_probe", "status": status, "ct": ct[:60], "range_ok": aspx_supports_ranges}), file=sys.stderr, flush=True)
+            except Exception as _aspx_exc:
+                if PROGRESS_JSON:
+                    import sys
+                    print(json.dumps({"_debug": "sharepoint_aspx_probe_error", "error": str(_aspx_exc)[:100]}), file=sys.stderr, flush=True)
+
+            if aspx_supports_ranges:
+                if not PROGRESS_JSON:
+                    print(info("SharePoint download.aspx supports byte ranges — using it for multithreaded download"))
+                # Keep self.url as the download.aspx endpoint; fall through to the normal probe.
+            else:
+                rest_url = _sharepoint_rest_url(self.url)
+                if rest_url:
+                    if not PROGRESS_JSON:
+                        print(info(f"Trying SharePoint REST API: {rest_url}"))
+                    req_rest = Request(
+                        rest_url,
+                        method="GET",
+                        headers=self._build_request_headers({"Range": "bytes=0-0"}),
+                    )
+                    try:
+                        with urlopen(req_rest, timeout=self.timeout) as resp:
+                            ct = resp.headers.get("Content-Type", "") or ""
+                            if PROGRESS_JSON:
+                                import sys
+                                print(json.dumps({"_debug": "rest_api_response", "ct": ct[:60], "url": resp.geturl()[:80]}), file=sys.stderr, flush=True)
+                            if "text/html" not in ct.lower():
+                                if not PROGRESS_JSON:
+                                    print(info("SharePoint REST API accessible — using it for download"))
+                                self.url = resp.geturl() or rest_url
+                                parsed = urlparse(self.url)
+                                default_name = Path(parsed.path).name or default_name
+                    except Exception as _rest_exc:
+                        if PROGRESS_JSON:
+                            import sys
+                            print(json.dumps({"_debug": "rest_api_error", "error": str(_rest_exc)[:100]}), file=sys.stderr, flush=True)
+                        pass  # Fall through to normal probe with original URL
+
+        req = Request(self.url, method="HEAD", headers=self._build_request_headers())
+
+        if PROGRESS_JSON:
+            import sys
+            cookie_names = [c.split("=")[0] for c in (self.cookies or "").split(";") if "=" in c]
+            print(json.dumps({"_debug": "probe_cookies", "names": cookie_names, "referer": (self.referer or "")[:60]}), file=sys.stderr, flush=True)
+        elif self.cookies:
+            print(info(f"Sending cookies: {self.cookies[:60]}..."))
+
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                headers = resp.headers
+                length = headers.get("Content-Length")
+                ranges = headers.get("Accept-Ranges", "")
+                disposition = headers.get("Content-Disposition", "")
+                content_type = headers.get("Content-Type", "")
+
+                # Detect HTML response — almost always means an auth failure or login redirect
+                if "text/html" in (content_type or "").lower():
+                    raise DownloadError(
+                        "Server returned an HTML page instead of a file "
+                        f"(Content-Type: {content_type}). "
+                        "This usually means SharePoint authentication failed — "
+                        "check that your browser session is still active and reload the page."
+                    )
+                
+                # Debug: Log response headers
+                if not PROGRESS_JSON:
+                    print(info(f"HEAD Response: Status=200, Content-Type={content_type}, Content-Length={length}"))
+                if PROGRESS_JSON:
+                    import sys
+                    print(json.dumps({"_debug": "probe_response", "method": "HEAD", "content_type": content_type, "length": length, "disposition": disposition[:80] if disposition else ""}), file=sys.stderr, flush=True)
+        except HTTPError as exc:
+            # Many endpoints (notably the SharePoint REST /$value endpoint) reject HEAD with
+            # 401/403/405 even when authenticated. So don't treat a failed HEAD as an auth
+            # failure yet — first retry with a tiny ranged GET, which is what actually serves
+            # the file. Only if the GET fallback also fails do we conclude auth is the problem.
+            if exc.code in (401, 403, 405):
+                # Some endpoints disallow HEAD. Probe with a tiny ranged GET instead.
+                req_fallback = Request(
+                    self.url,
+                    method="GET",
+                    headers=self._build_request_headers({"Range": "bytes=0-0"}),
+                )
+                try:
+                    with urlopen(req_fallback, timeout=self.timeout) as resp:
+                        headers = resp.headers
+                        length = headers.get("Content-Length")
+                        content_range = headers.get("Content-Range", "")
+                        ranges = headers.get("Accept-Ranges", "")
+                        disposition = headers.get("Content-Disposition", "")
+                        content_type = headers.get("Content-Type", "")
+
+                        # Debug: Log GET fallback response
+                        if not PROGRESS_JSON:
+                            print(info(f"GET Fallback Response: Content-Type={content_type}, Content-Length={length}"))
+                        if PROGRESS_JSON:
+                            import sys
+                            print(json.dumps({"_debug": "probe_fallback_response", "method": "GET", "content_type": content_type, "length": length}), file=sys.stderr, flush=True)
+
+                        if "text/html" in (content_type or "").lower():
+                            raise DownloadError(
+                                "Server returned an HTML page instead of a file "
+                                f"(Content-Type: {content_type}). "
+                                "This usually means SharePoint authentication failed — "
+                                "check that your browser session is still active and reload the page."
+                            )
+
+                        # For 206 responses, total size is usually in Content-Range.
+                        if content_range and "/" in content_range:
+                            total = content_range.split("/")[-1].strip()
+                            if total.isdigit():
+                                length = total
+
+                        # 206 is a strong signal that range requests are supported.
+                        status = getattr(resp, "status", None)
+                        if status == 206 and "bytes" not in ranges.lower():
+                            ranges = "bytes"
+                except HTTPError as fallback_exc:
+                    # Prioritize auth detection: with no auth material (no token headers and no
+                    # cookies) a 401/403 means auth is required; if we DID send auth (a token or
+                    # session cookies) but still got 401/403, the credentials are invalid/expired.
+                    if fallback_exc.code in (401, 403):
+                        has_auth = bool(self.auth_headers) or bool(self.cookies)
+                        if not has_auth:
+                            raise AuthenticationRequiredError(
+                                f"Authentication required: HTTP {fallback_exc.code}"
+                            ) from fallback_exc
+                        else:
+                            raise InvalidTokenError(
+                                f"Authentication failed: HTTP {fallback_exc.code}. "
+                                "Session may be expired — reload the page in your browser and retry."
+                            ) from fallback_exc
+                    raise DownloadError(
+                        f"Probe request failed after HEAD HTTP {exc.code}: HTTP {fallback_exc.code}"
+                    ) from fallback_exc
+                except URLError as fallback_exc:
+                    raise DownloadError(
+                        f"Probe request failed after HEAD HTTP {exc.code}: {fallback_exc.reason}"
+                    ) from fallback_exc
+            else:
+                raise DownloadError(f"HEAD request failed: HTTP {exc.code}") from exc
+        except URLError as exc:
+            raise DownloadError(f"HEAD request failed: {exc.reason}") from exc
+
+        filename = extract_filename_from_disposition(disposition) or default_name
+        content_length = int(length) if length and length.isdigit() else None
+        accept_ranges = "bytes" in ranges.lower()
+
+        return RemoteInfo(
+            content_length=content_length,
+            accept_ranges=accept_ranges,
+            filename=filename,
+        )
+
+    def _single_download(self, total_bytes: Optional[int]) -> None:
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        progress = Progress(total_bytes)
+
+        req = Request(self.url, method="GET", headers=self._build_request_headers())
+        try:
+            with urlopen(req, timeout=self.timeout) as resp, self.output.open("wb") as fout:
+                while True:
+                    chunk = resp.read(self.chunk_size)
+                    if not chunk:
+                        break
+                    fout.write(chunk)
+                    progress.add(len(chunk))
+                    print_progress(progress)
+        except HTTPError as exc:
+            if exc.code in (401, 403) and self.auth_headers:
+                raise InvalidTokenError(
+                    f"Authentication failed: HTTP {exc.code}. Token may be expired or invalid."
+                ) from exc
+            raise
+
+        print_progress(progress, done=True)
+        print_final_stats(progress)
+        if not PROGRESS_JSON:
+            print(success("Download complete."))
+
+    def _parallel_download(self, total_bytes: int) -> None:
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        self._prepare_file(total_bytes)
+        range_size = choose_range_size(total_bytes, self.threads, self.chunk_size)
+        ranges = split_ranges(total_bytes, range_size)
+        progress = Progress(total_bytes)
+        next_range_index = 0
+        range_lock = threading.Lock()
+        stop_event = threading.Event()
+        worker_errors: queue.Queue[BaseException] = queue.Queue()
+
+        print(
+            highlight(
+                f"Using {min(self.threads, len(ranges))} threads across {len(ranges)} ranges "
+                f"({format_bytes(range_size)} each)"
+            )
+        )
+
+        def claim_range() -> Optional[tuple[int, int]]:
+            nonlocal next_range_index
+            if stop_event.is_set():
+                return None
+            with range_lock:
+                if next_range_index >= len(ranges):
+                    return None
+                byte_range = ranges[next_range_index]
+                next_range_index += 1
+                return byte_range
+
+        def worker() -> None:
+            try:
+                while not stop_event.is_set():
+                    byte_range = claim_range()
+                    if byte_range is None:
+                        return
+                    start, end = byte_range
+                    self._download_range(start, end, progress, stop_event)
+            except BaseException as exc:
+                stop_event.set()
+                worker_errors.put(exc)
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(self.threads, len(ranges)))
+        futures = [pool.submit(worker) for _ in range(min(self.threads, len(ranges)))]
+
+        try:
+            while True:
+                if not worker_errors.empty():
+                    exc = worker_errors.get()
+                    raise DownloadError(f"Parallel download failed: {exc}") from exc
+
+                done_count = sum(1 for f in futures if f.done())
+                print_progress(progress)
+                if done_count == len(futures):
+                    break
+                time.sleep(0.4)
+        except KeyboardInterrupt:
+            stop_event.set()
+            # Avoid waiting on all worker futures during user interrupt.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            if not stop_event.is_set():
+                pool.shutdown(wait=True)
+
+        for fut in futures:
+            exc = fut.exception()
+            if exc:
+                raise DownloadError(f"Parallel download failed: {exc}") from exc
+
+        print_progress(progress, done=True)
+        print_final_stats(progress)
+        if not PROGRESS_JSON:
+            print(success("Download complete."))
+
+    def _prepare_file(self, total_bytes: int) -> None:
+        with self.output.open("wb") as fout:
+            fout.truncate(total_bytes)
+
+    def _download_range(
+        self,
+        start: int,
+        end: int,
+        progress: Progress,
+        stop_event: Optional[threading.Event] = None,
+    ) -> None:
+        expected = end - start + 1
+
+        attempt = 0
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                raise DownloadInterruptedError("Interrupted")
+
+            attempt += 1
+            downloaded = 0
+            req = Request(
+                self.url,
+                method="GET",
+                headers=self._build_request_headers({"Range": f"bytes={start}-{end}"}),
+            )
+            try:
+                with urlopen(req, timeout=self.timeout) as resp, self.output.open("r+b") as fout:
+                    status = getattr(resp, "status", None)
+                    if status not in (206, None):
+                        raise DownloadError(f"Expected HTTP 206 for range request, got {status}")
+
+                    fout.seek(start)
+                    while downloaded < expected:
+                        if stop_event is not None and stop_event.is_set():
+                            raise DownloadInterruptedError("Interrupted")
+
+                        to_read = min(self.chunk_size, expected - downloaded)
+                        chunk = resp.read(to_read)
+                        if not chunk:
+                            break
+                        fout.write(chunk)
+                        downloaded += len(chunk)
+                        progress.add(len(chunk))
+
+                if downloaded != expected:
+                    raise DownloadError(
+                        f"Thread range {start}-{end} incomplete ({downloaded}/{expected} bytes)"
+                    )
+                return
+
+            except HTTPError as exc:
+                if exc.code in (401, 403) and self.auth_headers:
+                    raise InvalidTokenError(
+                        f"Authentication failed: HTTP {exc.code}. Token may be expired or invalid."
+                    ) from exc
+            except Exception as exc:
+                if downloaded:
+                    # Roll back bytes counted for this failed attempt to avoid double-counting.
+                    progress.add(-downloaded)
+                if stop_event is not None and stop_event.is_set():
+                    raise
+                if attempt > self.retries:
+                    raise DownloadError(
+                        f"Range {start}-{end} failed after {self.retries} retries: {exc}"
+                    ) from exc
+                # Brief backoff helps when the server temporarily throttles connections.
+                time.sleep(0.4 * attempt)
+
+
+def choose_range_size(total: int, workers: int, chunk_size: int) -> int:
+    target_ranges = max(workers * 8, workers)
+    balanced_size = max(1, math.ceil(total / target_ranges))
+    return max(chunk_size * 4, balanced_size)
+
+
+def split_ranges(total: int, part_size: int) -> list[tuple[int, int]]:
+    ranges = []
+    start = 0
+
+    while start < total:
+        end = min(start + part_size - 1, total - 1)
+        ranges.append((start, end))
+        start = end + 1
+
+    return ranges
+
+
+def extract_filename_from_disposition(disposition: str) -> Optional[str]:
+    if not disposition:
+        return None
+
+    parts = [part.strip() for part in disposition.split(";")]
+
+    # Prefer RFC 5987 filename* if present, e.g. filename*=UTF-8''file.zip
+    for part in parts:
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        if key.strip().lower() != "filename*":
+            continue
+        value = value.strip().strip('"').strip("'")
+        if "''" in value:
+            _, encoded = value.split("''", 1)
+        else:
+            encoded = value
+        decoded = unquote(encoded)
+        if decoded:
+            return Path(decoded).name
+
+    # Fall back to plain filename=
+    for part in parts:
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        if key.strip().lower() != "filename":
+            continue
+        filename = value.strip().strip('"').strip("'")
+        if filename:
+            return Path(filename).name
+
+    return None
+
+
+def resolve_sharepoint_url(url: str) -> str:
+    """Resolve SharePoint download.aspx wrapper pages to actual file URLs."""
+    try:
+        # If this is a download.aspx page, we need to get the actual download URL
+        if "download.aspx" in url:
+            # download.aspx pages typically redirect to the actual file
+            # We need to follow redirects and get the final URL
+            headers = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+            }
+            
+            req = Request(url, method="HEAD", headers=headers)
+            try:
+                with urlopen(req, timeout=10) as resp:
+                    final_url = resp.geturl()
+                    # If HEAD gave us a different URL or redirect info
+                    if final_url != url and "download.aspx" not in final_url:
+                        if PROGRESS_JSON:
+                            import sys
+                            print(json.dumps({"_debug": "sharepoint_head_redirect", "to": final_url[:100]}), file=sys.stderr, flush=True)
+                        return final_url
+            except HTTPError as e:
+                # HEAD might not be allowed, fall through to GET
+                if PROGRESS_JSON:
+                    import sys
+                    print(json.dumps({"_debug": "sharepoint_head_failed", "code": e.code}), file=sys.stderr, flush=True)
+            except (URLError, Exception) as e:
+                # Fall through to GET
+                if PROGRESS_JSON:
+                    import sys
+                    print(json.dumps({"_debug": "sharepoint_head_error", "error": str(e)[:50]}), file=sys.stderr, flush=True)
+            
+            # Try GET request with minimal read to follow redirects
+            req = Request(url, method="GET", headers=headers)
+            try:
+                with urlopen(req, timeout=10) as resp:
+                    final_url = resp.geturl()
+                    
+                    # Check response content-type
+                    content_type = resp.headers.get("Content-Type", "")
+                    content_length = resp.headers.get("Content-Length", "")
+                    
+                    if PROGRESS_JSON:
+                        import sys
+                        print(json.dumps({"_debug": "sharepoint_response", "url": final_url[:100], "type": content_type[:50], "length": content_length}), file=sys.stderr, flush=True)
+                    
+                    # If we got a binary file (content-length > 0 and not HTML)
+                    if content_length and int(content_length) > 0 and "text/html" not in content_type:
+                        return final_url
+                    
+                    # If we got HTML, read it to look for the actual download URL
+                    if "text/html" in content_type or final_url.endswith(".aspx"):
+                        body = resp.read(50000).decode("utf-8", errors="ignore")  # Read first 50KB
+                        
+                        # Look for redirects in common SharePoint patterns
+                        patterns = [
+                            # IFrame src
+                            r'<iframe[^>]*src=["\']([^"\']*download[^"\']*)["\']',
+                            # Location header or meta refresh
+                            r'<meta\s+http-equiv=["\']refresh["\'][^>]*content=["\'].*?url=([^"\']+)["\']',
+                            # Direct links
+                            r'href=["\']([^"\']*(?:download|file)[^"\']*)["\']',
+                            # JSON-style URLs
+                            r'"(?:downloadUrl|url)":\s*"([^"]+)"',
+                        ]
+                        
+                        for pattern in patterns:
+                            matches = re.findall(pattern, body, re.IGNORECASE)
+                            for extracted_url in matches:
+                                # Filter out false positives
+                                if "sharepoint" in extracted_url or "download.aspx" in extracted_url:
+                                    continue
+                                
+                                # Clean up the URL
+                                extracted_url = extracted_url.replace("&amp;", "&")
+                                extracted_url = unquote(extracted_url)
+                                
+                                # Make absolute URL if relative
+                                if extracted_url.startswith("/"):
+                                    parsed = urlparse(url)
+                                    extracted_url = f"{parsed.scheme}://{parsed.netloc}{extracted_url}"
+                                elif not extracted_url.startswith("http"):
+                                    parsed = urlparse(url)
+                                    base = f"{parsed.scheme}://{parsed.netloc}"
+                                    extracted_url = f"{base}/{extracted_url}"
+                                
+                                if PROGRESS_JSON:
+                                    import sys
+                                    print(json.dumps({"_debug": "sharepoint_extracted_url", "url": extracted_url[:100]}), file=sys.stderr, flush=True)
+                                
+                                # Only return if it looks like a real file URL
+                                if extracted_url and not extracted_url.endswith(".aspx"):
+                                    return extracted_url
+                    
+                    # If final_url is different and not another aspx, return it
+                    if final_url != url and ".aspx" not in final_url:
+                        return final_url
+                        
+            except Exception as e:
+                if PROGRESS_JSON:
+                    import sys
+                    print(json.dumps({"_debug": "sharepoint_get_error", "error": str(e)[:50]}), file=sys.stderr, flush=True)
+        
+        # For regular SharePoint sharing links (not download.aspx)
+        elif "sharepoint.com" in url:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+            }
+            
+            req = Request(url, method="GET", headers=headers)
+            try:
+                with urlopen(req, timeout=10) as resp:
+                    final_url = resp.geturl()
+                    if final_url != url:
+                        return final_url
+            except Exception:
+                pass
+        
+    except Exception as e:
+        if PROGRESS_JSON:
+            import sys
+            print(json.dumps({"_debug": "sharepoint_resolve_exception", "error": str(e)[:80]}), file=sys.stderr, flush=True)
+    
+    return url
+
+
+def _sharepoint_rest_url(url: str) -> Optional[str]:
+    """Convert a SharePoint download.aspx?UniqueId=<guid> URL to the REST API /$value endpoint.
+
+    The REST endpoint is more reliable for cookie-authenticated downloads than the ASPX
+    handler, especially for cross-user OneDrive sharing scenarios.
+    """
+    try:
+        parsed = urlparse(url)
+        if 'download.aspx' not in parsed.path:
+            return None
+        params = parse_qs(parsed.query)
+        uid = (params.get('UniqueId') or params.get('uniqueid') or [None])[0]
+        if not uid:
+            return None
+        # Strip /_layouts/... from the path to get the site root
+        site_root = parsed.path.split('/_layouts')[0]
+        return f"{parsed.scheme}://{parsed.netloc}{site_root}/_api/web/GetFileById('{uid}')/$value"
+    except Exception:
+        return None
+
+
+def normalize_download_url(url: str) -> str:
+    """Convert known Artifactory UI browse URLs into direct artifact URLs, and resolve SharePoint redirects."""
+    parsed = urlparse(url)
+    path = parsed.path or ""
+
+    # SharePoint URLs are handled with cookies in _probe_remote; skip unauthenticated resolution here.
+    if "sharepoint.com" in parsed.netloc:
+        return url
+
+    # UI API download URLs, e.g.:
+    # /ui/api/v1/download?repoKey=...&path=...
+    if path.endswith("/ui/api/v1/download"):
+        query = parse_qs(parsed.query)
+        if PROGRESS_JSON:
+            import sys
+            print(json.dumps({"_debug": "matched_ui_api", "query_keys": list(query.keys())}), file=sys.stderr, flush=True)
+        repo_key = (query.get("repoKey") or [None])[0]
+        raw_path = (query.get("path") or [None])[0]
+        if PROGRESS_JSON:
+            import sys
+            print(json.dumps({"_debug": "parsed_query", "repo_key": repo_key, "has_raw_path": raw_path is not None}), file=sys.stderr, flush=True)
+        if repo_key and raw_path:
+            decoded_path = raw_path
+            # Some callers double-encode path components; decode until stable.
+            for _ in range(3):
+                next_path = unquote(decoded_path)
+                if next_path == decoded_path:
+                    break
+                decoded_path = next_path
+            decoded_path = decoded_path.lstrip("/")
+
+            normalized_path = quote(f"/artifactory/{repo_key}/{decoded_path}", safe="/-._~+")
+            final_url = f"{parsed.scheme}://{parsed.netloc}{normalized_path}"
+            if PROGRESS_JSON:
+                import sys
+                print(json.dumps({"_debug": "normalized_url_success", "new_url": final_url[:150]}), file=sys.stderr, flush=True)
+            return final_url
+
+    if "/ui/repos/tree/General/" not in path:
+        if PROGRESS_JSON:
+            import sys
+            print(json.dumps({"_debug": "no_ui_match", "original_url": url[:100]}), file=sys.stderr, flush=True)
+        return url
+
+    # Example UI path:
+    # /ui/repos/tree/General/OLA-Products/Abasi/release/master/0.0.17-3399%2B9594824/file.tar.gz
+    prefix = "/ui/repos/tree/General/"
+    suffix = path.split(prefix, 1)[1]
+    suffix = unquote(suffix)
+
+    normalized_path = quote(f"/artifactory/{suffix}", safe="/-._~+")
+    return f"{parsed.scheme}://{parsed.netloc}{normalized_path}"
+
+
+def format_bytes(num: float) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(num)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{value:.2f} TB"
+
+
+def format_time(seconds: float) -> str:
+    """Format seconds as MM:SS."""
+    total_secs = int(seconds)
+    mins = total_secs // 60
+    secs = total_secs % 60
+    return f"{mins}:{secs:02d}"
+
+
+def print_progress(progress: Progress, done: bool = False) -> None:
+    global _LAST_JSON_EMIT
+
+    if PROGRESS_JSON:
+        now = time.time()
+        if not done and (now - _LAST_JSON_EMIT) < 0.4:
+            return
+
+        downloaded, speed = progress.snapshot()
+        elapsed = progress.elapsed_seconds()
+        avg_speed = downloaded / max(elapsed, 1e-6)
+
+        total = int(progress.total_bytes or 0)
+        if total > 0 and avg_speed > 1e-6:
+            remaining = max(total - downloaded, 0)
+            eta = int(remaining / avg_speed)
+        else:
+            eta = 0
+
+        payload = {
+            "downloaded": int(downloaded),
+            "total": total,
+            "speed": int(speed),
+            "eta": eta,
+            "completed": bool(done),
+            "status": "completed" if done else "downloading",
+        }
+        print(json.dumps(payload), flush=True)
+        _LAST_JSON_EMIT = now
+        return
+
+    if not hasattr(print_progress, "_last_len"):
+        print_progress._last_len = 0  # type: ignore[attr-defined]
+
+    downloaded, speed = progress.snapshot()
+    elapsed = progress.elapsed_seconds()
+    avg_speed = downloaded / max(elapsed, 1e-6)
+
+    if progress.total_bytes:
+        pct = 100.0 * downloaded / progress.total_bytes
+        remaining = max(progress.total_bytes - downloaded, 0)
+        eta = format_time(remaining / avg_speed) if avg_speed > 1e-6 else "--:--"
+        line_body = (
+            f"Downloaded: {format_bytes(downloaded)} / {format_bytes(progress.total_bytes)} "
+            f"({pct:6.2f}%)  Speed: {format_bytes(speed)}/s  ETA: {eta}  "
+            f"Avg: {format_bytes(avg_speed)}/s"
+        )
+    else:
+        line_body = (
+            f"Downloaded: {format_bytes(downloaded)}  Speed: {format_bytes(speed)}/s  "
+            f"Avg: {format_bytes(avg_speed)}/s"
+        )
+
+    prev_len = getattr(print_progress, "_last_len")  # type: ignore[attr-defined]
+    padding = " " * max(prev_len - len(line_body), 0)
+    line = f"\r{line_body}{padding}"
+
+    end = "\n" if done else ""
+    print(line, end=end, flush=True)
+
+    if done:
+        print_progress._last_len = 0  # type: ignore[attr-defined]
+    else:
+        print_progress._last_len = len(line_body)  # type: ignore[attr-defined]
+
+
+def print_final_stats(progress: Progress) -> None:
+    if PROGRESS_JSON:
+        return
+
+    elapsed = progress.elapsed_seconds()
+    downloaded, _ = progress.snapshot()
+    avg_speed = downloaded / max(elapsed, 1e-6)
+    print(
+        success(f"Total time: {format_time(elapsed)}  Average speed: {format_bytes(avg_speed)}/s")
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Multithreaded HTTP downloader")
+    parser.add_argument("url", help="HTTP/HTTPS URL to download")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=".",
+        help="Output file path or existing output directory (default: current directory)",
+    )
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=8,
+        help="Number of parallel threads for range download (default: 8)",
+    )
+    parser.add_argument(
+        "-c",
+        "--chunk-size",
+        type=int,
+        default=1024 * 1024,
+        help="Read chunk size in bytes per thread (default: 1048576)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Socket timeout in seconds (default: 30)",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=3,
+        help="Retry attempts per thread/range (default: 3)",
+    )
+    parser.add_argument(
+        "--token",
+        help="Access token for authenticated downloads",
+    )
+    parser.add_argument(
+        "--token-env",
+        default="BOSE_ARTIFACTORY_TOKEN",
+        help="Environment variable name to read token from if --token is not provided (default: BOSE_ARTIFACTORY_TOKEN)",
+    )
+    parser.add_argument(
+        "--token-type",
+        default="api_key",
+        choices=["api_key", "bearer"],
+        help="How to send the token: api_key uses X-JFrog-Art-Api header, bearer uses Authorization: Bearer (default: api_key)",
+    )
+    parser.add_argument(
+        "--skip-url-normalize",
+        action="store_true",
+        help="Skip automatic URL normalization (use when the caller has already resolved the URL)",
+    )
+    parser.add_argument(
+        "--cookies",
+        help="HTTP cookies to send with requests (key=value; key=value format)",
+    )
+    parser.add_argument(
+        "--referer",
+        help="Referer URL to send with HTTP requests",
+    )
+    parser.add_argument(
+        "--user-agent",
+        help="User-Agent header to send with HTTP requests (default: a Chrome UA)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit progress as JSON lines (for integration with other tools)",
+    )
+    return parser.parse_args()
+
+
+def _token_env_help(env_name: str) -> str:
+    return (
+        "Authentication is required, but token is missing.\n"
+        f"Set the token env var and retry:\n"
+        f"  export {env_name}=\"<your-token>\"\n"
+        "Then run the downloader command again."
+    )
+
+
+def _expired_token_help(env_name: str) -> str:
+    return (
+        "Token authentication failed. Token may be expired or invalid.\n"
+        "To get a new token:\n"
+        "  1. Visit https://artifactory.bose.com/ui/admin/artifactory/security/api_key\n"
+        "  2. Generate or copy your API key\n"
+        f"  3. Set the new token:\n"
+        f"     export {env_name}=\"<your-new-token>\"\n"
+        "  4. Run the downloader command again."
+    )
+
+
+def resolve_token(args: argparse.Namespace, require_token: bool = False) -> Optional[str]:
+    token = args.token
+    if token is not None:
+        token = token.strip()
+    if not token and args.token_env:
+        token = os.environ.get(args.token_env)
+        if token is not None:
+            token = token.strip()
+
+    if not token:
+        if require_token:
+            env_name = args.token_env or "BOSE_ARTIFACTORY_TOKEN"
+            raise DownloadError(_token_env_help(env_name))
+        return None
+
+    return token
+
+
+def build_auth_headers(token: str, mode: str = "api_key") -> dict[str, str]:
+    if mode == "bearer":
+        return {"Authorization": f"Bearer {token}"}
+
+    return {"X-JFrog-Art-Api": token}
+
+
+def main() -> int:
+    global PROGRESS_JSON
+
+    args = parse_args()
+    PROGRESS_JSON = bool(args.json)
+
+    try:
+        normalized_url = args.url if args.skip_url_normalize else normalize_download_url(args.url)
+        if normalized_url != args.url:
+            if PROGRESS_JSON:
+                import sys
+                print(json.dumps({"_debug": "url_normalized", "original": args.url[:100], "normalized": normalized_url[:100]}), file=sys.stderr, flush=True)
+            else:
+                print(info(f"Converted UI URL to direct artifact URL: {normalized_url}"))
+            args.url = normalized_url
+        elif PROGRESS_JSON:
+            import sys
+            print(json.dumps({"_debug": "url_unchanged"}), file=sys.stderr, flush=True)
+
+        token = resolve_token(args, require_token=False)
+        auth_headers = build_auth_headers(token, mode=args.token_type) if token else {}
+
+        def run_with_headers(headers: dict[str, str]) -> None:
+            downloader = Downloader(
+                url=args.url,
+                output=Path(args.output),
+                threads=args.threads,
+                chunk_size=args.chunk_size,
+                timeout=args.timeout,
+                retries=args.retries,
+                auth_headers=headers,
+                cookies=getattr(args, 'cookies', None),
+                referer=getattr(args, 'referer', None),
+                user_agent=getattr(args, 'user_agent', None),
+            )
+            downloader.run()
+
+        try:
+            run_with_headers(auth_headers)
+        except InvalidTokenError:
+            # Some Artifactory instances expect Bearer tokens instead of X-JFrog-Art-Api.
+            if token:
+                if not PROGRESS_JSON:
+                    print(info("API key header rejected. Retrying with Bearer token header."))
+                run_with_headers(build_auth_headers(token, mode="bearer"))
+            else:
+                raise
+        except AuthenticationRequiredError:
+            if auth_headers:
+                raise
+            try:
+                token = resolve_token(args, require_token=True)
+                auto_headers = build_auth_headers(token, mode="api_key") if token else {}
+                if not PROGRESS_JSON:
+                    print(
+                        info(
+                            f"Authentication required. Retrying with token from {args.token_env}."
+                        )
+                    )
+                try:
+                    run_with_headers(auto_headers)
+                except InvalidTokenError:
+                    if token:
+                        if not PROGRESS_JSON:
+                            print(info("API key header rejected. Retrying with Bearer token header."))
+                        run_with_headers(build_auth_headers(token, mode="bearer"))
+                    else:
+                        raise
+            except DownloadError as auth_setup_error:
+                # If token setup fails (missing/empty env var), print help and return
+                # Don't re-raise to avoid double-printing in outer handler
+                if PROGRESS_JSON:
+                    print(json.dumps({
+                        "status": "error",
+                        "completed": True,
+                        "error": str(auth_setup_error),
+                    }), flush=True)
+                if not PROGRESS_JSON:
+                    print(f"\n{error(str(auth_setup_error))}\n")
+                return 1
+    except KeyboardInterrupt:
+        if PROGRESS_JSON:
+            print(json.dumps({
+                "status": "cancelled",
+                "completed": True,
+                "error": "Download interrupted by user"
+            }), flush=True)
+        if not PROGRESS_JSON:
+            print(warning("\nDownload interrupted by user."))
+        return 130
+    except InvalidTokenError as exc:
+        env_name = args.token_env or "BOSE_ARTIFACTORY_TOKEN"
+        if PROGRESS_JSON:
+            print(json.dumps({
+                "status": "error",
+                "completed": True,
+                "error": str(exc),
+            }), flush=True)
+        if not PROGRESS_JSON:
+            print(f"\n{error(str(exc))}\n")
+            print(_expired_token_help(env_name))
+        return 1
+    except DownloadError as exc:
+        if PROGRESS_JSON:
+            print(json.dumps({
+                "status": "error",
+                "completed": True,
+                "error": str(exc),
+            }), flush=True)
+        if not PROGRESS_JSON:
+            print(error(f"Download failed: {exc}"))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyperFetch</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>HyperFetch</h1>
+        </header>
+        <div id="downloads" class="tab-content active">
+            <div class="downloads-toolbar">
+                <button id="openSettingsBtn" class="btn-toolbar btn-toolbar-icon" type="button" title="Open settings" aria-label="Open settings">⚙</button>
+                <button id="clearHistoryBtn" class="btn-toolbar" type="button">Clear History</button>
+            </div>
+            <div id="downloads-list" class="downloads-list">
+                <p class="placeholder">No active downloads</p>
+            </div>
+            <div id="status" class="status-message"></div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>

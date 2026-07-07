@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Flask
+instance/
+.webassets-cache
+
+# Logging
+*.log
+
+# Runtime state
+**/.download_history.*.json
+
+# Downloads
+downloads/
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.iso
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Chrome Extension
+chrome-extension/src/images/  # Generated icons
+
+# Environment variables
+.env
+.env.local
+
+DEBUGGING.md

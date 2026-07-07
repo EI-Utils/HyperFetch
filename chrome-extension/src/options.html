@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HyperFetch - Settings</title>
+    <link rel="stylesheet" href="options.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>HyperFetch Settings</h1>
+        </header>
+
+        <main>
+            <!-- Native Host Configuration -->
+            <section class="settings-section">
+                <h2>Native Host Configuration</h2>
+                <div class="settings-group">
+                    <p class="help-text">This extension now uses Chrome Native Messaging instead of an always-on Flask server.</p>
+                    <small>Install and register the native host, then run a connectivity check below.</small>
+                </div>
+
+                <div class="test-connection">
+                    <button id="testBtn" class="btn-secondary">Test Native Host</button>
+                    <div id="connectionStatus"></div>
+                </div>
+            </section>
+
+            <!-- Download Settings -->
+            <section class="settings-section">
+                <h2>Download Settings</h2>
+
+                <div class="settings-group">
+                    <label for="threadCount">Thread Count</label>
+                    <div class="slider-container">
+                        <input type="range" id="threadCount" min="1" max="32" value="8">
+                        <span class="slider-value" id="threadCountValue">8</span>
+                    </div>
+                    <small>Number of parallel threads for downloads (1-32)</small>
+                </div>
+
+                <div class="settings-group">
+                    <label for="chunkSize">Chunk Size (MB)</label>
+                    <div class="slider-container">
+                        <input type="range" id="chunkSize" min="1" max="50" value="5">
+                        <span class="slider-value" id="chunkSizeValue">5 MB</span>
+                    </div>
+                    <small>Size of each download chunk</small>
+                </div>
+
+                <div class="settings-group">
+                    <label for="minFileSize">Minimum File Size for Parallel Download</label>
+                    <div class="slider-container">
+                        <input type="range" id="minFileSize" min="10" max="1000" value="100" step="10">
+                        <span class="slider-value" id="minFileSizeValue">100 MB</span>
+                    </div>
+                    <small>Only files larger than this will be intercepted</small>
+                </div>
+
+                <div class="settings-group">
+                    <label for="excludedSiteInput">Excluded Websites</label>
+                    <div class="site-input-row">
+                        <input type="text" id="excludedSiteInput" placeholder="https://example.com/">
+                        <button id="addSiteBtn" class="btn-secondary" type="button">Add</button>
+                    </div>
+                    <div id="excludedSitesList" class="site-list"></div>
+                    <small>Do not intercept downloads from websites in this list.</small>
+                </div>
+
+                <div class="settings-group">
+                    <label>
+                        <input type="checkbox" id="autoIntercept" checked>
+                        Automatically intercept large downloads
+                    </label>
+                    <small>Show a prompt when a large file download is detected</small>
+                </div>
+            </section>
+
+            <!-- Download Paths -->
+            <section class="settings-section">
+                <h2>Download Paths</h2>
+
+                <div class="settings-group">
+                    <label for="downloadDir">Download Directory</label>
+                    <div class="path-input">
+                        <input type="text" id="downloadDir" placeholder="/home/user/Downloads" readonly>
+                        <button id="browseBtn" class="btn-secondary">Browse</button>
+                    </div>
+                    <small>Default directory for downloaded files. Leave empty to use browser's default.</small>
+                </div>
+
+                <div class="settings-group">
+                    <label>
+                        <input type="checkbox" id="createSubdir">
+                        Create subdirectory for each domain
+                    </label>
+                    <small>Organize downloads by website domain</small>
+                </div>
+            </section>
+
+            <!-- Advanced -->
+            <section class="settings-section">
+                <h2>Advanced</h2>
+
+                <div class="settings-group">
+                    <label for="timeout">Connection Timeout (seconds)</label>
+                    <input type="number" id="timeout" min="10" max="300" value="30">
+                </div>
+
+                <div class="settings-group">
+                    <label for="retries">Number of Retries</label>
+                    <input type="number" id="retries" min="0" max="10" value="3">
+                </div>
+
+                <div class="settings-group">
+                    <label>
+                        <input type="checkbox" id="enableLogging">
+                        Enable detailed logging
+                    </label>
+                    <small>Useful for debugging download issues</small>
+                </div>
+            </section>
+
+            <!-- Action Buttons -->
+            <section class="settings-section actions">
+                <button id="saveBtn" class="btn-primary">Save All Settings</button>
+                <button id="resetBtn" class="btn-secondary">Reset to Defaults</button>
+                <button id="clearCacheBtn" class="btn-secondary">Clear Download History</button>
+            </section>
+
+            <!-- Status Message -->
+            <div id="statusMessage" class="status-message"></div>
+        </main>
+
+        <footer>
+            <p>Version 1.0.0 | <a href="#" id="helpLink">Help & Support</a></p>
+        </footer>
+    </div>
+
+    <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "com.hyperfetch.host",
+  "description": "Native messaging host for HyperFetch",
+  "path": "__HOST_PATH__",
+  "type": "stdio",
+  "allowed_extensions": [
+    "__EXTENSION_ID__"
+  ]
+}

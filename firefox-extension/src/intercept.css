@@ -1,0 +1,195 @@
+* {
+    box-sizing: border-box;
+}
+
+:root {
+    color-scheme: light dark;
+    --bg: #eef2f8;
+    --text: #1f2937;
+    --muted-text: #526071;
+    --card-bg: #ffffff;
+    --card-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+    --label-text: #64748b;
+    --input-bg: #ffffff;
+    --input-border: #cbd5e1;
+    --input-focus: #2563eb;
+    --input-focus-ring: rgba(37, 99, 235, 0.12);
+    --checkbox-text: #334155;
+    --btn-primary-bg: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    --btn-primary-text: #ffffff;
+    --btn-secondary-bg: #e2e8f0;
+    --btn-secondary-text: #0f172a;
+    --status-text: #475569;
+    --status-error: #b91c1c;
+    --status-success: #166534;
+    --warning-text: #d97706;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0f172a;
+        --text: #e2e8f0;
+        --muted-text: #94a3b8;
+        --card-bg: #1e293b;
+        --card-shadow: 0 12px 30px rgba(2, 6, 23, 0.45);
+        --label-text: #a5b4c8;
+        --input-bg: #0f172a;
+        --input-border: #334155;
+        --input-focus: #60a5fa;
+        --input-focus-ring: rgba(96, 165, 250, 0.22);
+        --checkbox-text: #cbd5e1;
+        --btn-primary-bg: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        --btn-primary-text: #f8fafc;
+        --btn-secondary-bg: #334155;
+        --btn-secondary-text: #e2e8f0;
+        --status-text: #cbd5e1;
+        --status-error: #fca5a5;
+        --status-success: #86efac;
+        --warning-text: #fbbf24;
+    }
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+}
+
+.shell {
+    min-height: 100vh;
+    padding: 18px;
+}
+
+.hero {
+    margin-bottom: 16px;
+}
+
+.hero h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+}
+
+.hero p {
+    margin: 0;
+    color: var(--muted-text);
+    font-size: 14px;
+}
+
+.card {
+    background: var(--card-bg);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: var(--card-shadow);
+}
+
+.field-block,
+.field-row {
+    margin-bottom: 16px;
+}
+
+.meta-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--label-text);
+}
+
+.field-value {
+    font-size: 14px;
+    font-weight: 600;
+    word-break: break-word;
+}
+
+input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--input-border);
+    background: var(--input-bg);
+    color: var(--text);
+    border-radius: 10px;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+input:focus {
+    outline: none;
+    border-color: var(--input-focus);
+    box-shadow: 0 0 0 3px var(--input-focus-ring);
+}
+
+.checkbox-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--checkbox-text);
+    text-transform: none;
+    letter-spacing: normal;
+    margin-bottom: 0;
+}
+
+.checkbox-option input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    padding: 0;
+}
+
+.actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.btn {
+    border: none;
+    border-radius: 10px;
+    padding: 11px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-text);
+}
+
+.btn-secondary {
+    background: var(--btn-secondary-bg);
+    color: var(--btn-secondary-text);
+}
+
+.status {
+    min-height: 20px;
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--status-text);
+}
+
+.status.error {
+    color: var(--status-error);
+}
+
+.status.success {
+    color: var(--status-success);
+}
+
+.file-name-warning {
+    min-height: 18px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--warning-text);
+    font-weight: 500;
+}

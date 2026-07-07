@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intercepted Download</title>
+    <link rel="stylesheet" href="intercept.css">
+</head>
+<body>
+    <div class="shell">
+        <header class="hero">
+            <h1>Intercepted Download</h1>
+            <p>Choose where to save the file, then start the multi-threaded download.</p>
+        </header>
+
+        <main class="card">
+            <div class="field-block">
+                <label class="field-label" for="fileNameInput">File Name</label>
+                <input id="fileNameInput" type="text" placeholder="filename.ext">
+                <div id="fileNameWarning" class="file-name-warning"></div>
+            </div>
+
+            <div class="field-row meta-row">
+                <div>
+                    <span class="field-label">Size</span>
+                    <div id="fileSize" class="field-value">Unknown</div>
+                </div>
+                <div>
+                    <span class="field-label">Threads</span>
+                    <div id="threadCount" class="field-value">8</div>
+                </div>
+            </div>
+
+            <div class="field-block">
+                <label class="field-label" for="downloadDir">Download Directory</label>
+                <input id="downloadDir" type="text" placeholder="/home/user/Downloads">
+                <button id="browseBtn" class="btn btn-secondary" type="button">Browse</button>
+            </div>
+
+            <div class="field-block">
+                <label class="checkbox-option" for="preferNativeForWebsite">
+                    <input id="preferNativeForWebsite" type="checkbox">
+                    <span>Always prefer native download for this website</span>
+                </label>
+            </div>
+
+            <div class="actions">
+                <button id="startBtn" class="btn btn-primary" type="button">Download</button>
+                <button id="nativeBtn" class="btn btn-secondary" type="button">Native Download</button>
+            </div>
+
+            <div id="status" class="status"></div>
+        </main>
+    </div>
+
+    <script src="intercept.js"></script>
+</body>
+</html>

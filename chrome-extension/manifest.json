@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "HyperFetch",
+  "version": "1.0.0",
+  "description": "Accelerate large file downloads (>100MB) using parallel threads",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA92FvLykWF9qdM/wLtOfzI6aJMUPfeoaEAX8mZiBlCjzGLAc0Wo2Il+fMjv7iSs+QpCjL/7ZozEpIH2awje+ndHwbx/oPLAaT634l7WcgvX6vbdT6J6dCovwCzXhQRHQyXao7e70r0X3aC4GVxOTLaRO7kXFu7ecYjkiEKej4PsGBK1OA03IamxJ+2Geoz3N+JLqc0Vt6/lUs+6NbysxZmSoV003J5KwV8Oy1nLWykCmWHVzqom00j5T6exU/FH2565/rReqYv24JimUR9JL0CoQGFrTugvM9DPBFlgsBzVRChtdSkiXulBJlVbULC/cbIOunU7NxbF2Cl5xEIrx9uQIDAQAB",
+  "permissions": [
+    "downloads",
+    "storage",
+    "notifications",
+    "nativeMessaging",
+    "cookies",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "icons": {
+    "16": "images/icon-16.png",
+    "32": "images/icon-32.png",
+    "48": "images/icon-48.png",
+    "128": "images/icon-128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "HyperFetch",
+    "default_icon": {
+      "16": "images/icon-16.png",
+      "32": "images/icon-32.png",
+      "48": "images/icon-48.png",
+      "128": "images/icon-128.png"
+    }
+  },
+  "options_page": "src/options.html"
+}
