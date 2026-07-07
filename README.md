@@ -31,43 +31,10 @@ single-stream download instead.
 
 ## ⚡ Quick start
 
-**Browser extension (Linux / macOS):**
-
-```bash
-./setup.sh            # sets up both Chrome and Firefox
-# ./setup.sh chrome   # Chrome only
-# ./setup.sh firefox  # Firefox only
-```
-
-**Browser extension (Windows):**
-
-Use the Windows setup script instead of `setup.sh` — double-click `setup-windows.bat`,
-or run it from a terminal (Command Prompt, PowerShell, or Git Bash):
-
-```bat
-setup-windows.bat            :: sets up both Chrome and Firefox
-setup-windows.bat chrome     :: Chrome only
-setup-windows.bat firefox    :: Firefox only
-```
-
-No admin rights are required — it registers the helper under your own user account
-(`HKEY_CURRENT_USER`). See [Windows notes](#-windows-notes) below for details.
-
-Then load the extension in your browser — see [Chrome](#chrome-extension) or
-[Firefox](#firefox-extension) below.
-
-**Command line:**
-
-```bash
-./downloader "https://example.com/large-file.zip" -o .
-```
-
-
----
-
 ## 🧩 1. Use the browser extension
 
-### <img src="https://cdn.simpleicons.org/googlechrome" alt="Chrome" width="20" height="20" align="center">&nbsp;Chrome extension
+### <img src="https://cdn.simpleicons.org/googlechrome/4285F4" alt="Chrome" width="14" height="14" style="vertical-align: middle;"> Chrome extension
+
 
 The Chrome extension detects large downloads, then downloads them faster using parallel
 connections.
@@ -79,13 +46,15 @@ connections.
    **Linux / macOS:**
 
    ```bash
-   ./setup.sh chrome
+   ./install.sh            # Sets up both Chrome and Firefox
+   ./install.sh chrome     # Chrome only
    ```
 
-   **Windows** (double-click `setup-windows.bat`, or run in a terminal):
+   **Windows** (`install.bat`, or run in a terminal):
 
    ```bat
-   setup-windows.bat chrome
+   install.bat            :: Sets up both Chrome and Firefox
+   install.bat chrome     :: Chrome only
    ```
 
 2. Open `chrome://extensions/`.
@@ -113,8 +82,9 @@ connections.
 
 > Having trouble? See [Troubleshooting](#-troubleshooting).
 
+---
 
-### <img src="https://cdn.simpleicons.org/firefoxbrowser" alt="Firefox" width="20" height="20" align="center">&nbsp;Firefox extension
+### <img src="https://cdn.simpleicons.org/firefoxbrowser/FF7139" alt="Firefox" width="14" height="14" style="vertical-align: middle;"> Firefox extension
 
 The Firefox extension works just like the Chrome one — it detects large downloads and speeds
 them up with parallel connections.
@@ -126,13 +96,15 @@ them up with parallel connections.
    **Linux / macOS:**
 
    ```bash
-   ./setup.sh firefox
+   ./install.sh            # Sets up both Chrome and Firefox
+   ./install.sh firefox    # Firefox only
    ```
 
-   **Windows** (double-click `setup-windows.bat`, or run in a terminal):
+   **Windows** (`install.bat`, or run in a terminal):
 
    ```bat
-   setup-windows.bat firefox
+   install.bat            :: Sets up both Chrome and Firefox
+   install.bat firefox    :: Firefox only
    ```
 
 2. Open `about:addons`.
@@ -150,8 +122,6 @@ them up with parallel connections.
    size, and download directory.
 2. Click **Test Native Host** to confirm it's connected.
 3. Start any large download — HyperFetch offers to speed it up and shows live progress.
-
-> Firefox and Chrome keep their settings and history separate, so configure each browser once.
 
 > Having trouble? See [Troubleshooting](#-troubleshooting).
 
@@ -286,17 +256,17 @@ the downloader:
 
 ## 🪟 Windows notes
 
-On Windows the setup works differently from Linux/macOS, so use `setup-windows.bat`
-(not `setup.sh`):
+On Windows the setup works differently from Linux/macOS, so use `install.bat`
+(not `install.sh`):
 
 - **Why a separate script?** Windows browsers don't read native-host manifests from a
   folder — they look them up in the **Windows Registry**, and they can't launch a `.py`
-  file directly. `setup-windows.bat` handles all of this for you.
+  file directly. `install.bat` handles all of this for you.
 - **What it does:** finds your Python, writes a small `native-host\run_native_host.bat`
   wrapper, writes the manifest JSON, and registers it under
   `HKEY_CURRENT_USER` for Chrome and Firefox.
 - **No admin required** — everything is written to your own user account.
-- **`setup-windows.bat` vs `setup-windows.ps1`:** the `.bat` is just a launcher that runs
+- **`install.bat` vs `setup-windows.ps1`:** the `.bat` is just a launcher that runs
   the `.ps1`, which does the real work. **Keep both files** — deleting the `.ps1` would
   break the `.bat`. You can equivalently run:
 
@@ -319,13 +289,13 @@ That's expected and the file still downloads correctly.
 
 **Chrome — "Native host not connecting" / Test Native Host fails?**
 
-- Re-run `./setup.sh chrome`.
+- Re-run `./install.sh chrome`.
 - Make sure the extension **ID** is `ekhohmoicafiheojabajlkkfibppajic`.
 - Reload the extension from `chrome://extensions/`.
 
 **Windows — "Native host not connecting" / Test Native Host fails?**
 
-- Re-run `setup-windows.bat chrome` (or `firefox`).
+- Re-run `install.bat chrome` (or `firefox`).
 - **Fully quit the browser** (close every window — check the tray) and reopen it; the
   registry entry is only read at startup.
 - Make sure Python is installed and on `PATH`: run `python --version` in a new terminal.
@@ -334,15 +304,15 @@ That's expected and the file still downloads correctly.
 **Windows — `[WinError 193] %1 is not a valid Win32 application`?**
 
 - This means the helper connected but couldn't launch Python. Update to the latest files
-  and re-run `setup-windows.bat`. Ensure Python 3 is installed and on `PATH`.
+  and re-run `install.bat`. Ensure Python 3 is installed and on `PATH`.
 
 **Firefox — "Native host disconnected"?**
 
 - This almost always means you're using the **Snap or Flatpak** Firefox (the default on
   Ubuntu), which can't launch helper apps. Install the regular Firefox from the
   [Mozilla APT repo](https://support.mozilla.org/kb/install-firefox-linux#w_install-firefox-deb-package-for-debian-based-distributions)
-  or the official tarball, then re-run `./setup.sh firefox`.
-- Otherwise, re-run `./setup.sh firefox` and reinstall the add-on.
+  or the official tarball, then re-run `./install.sh firefox`.
+- Otherwise, re-run `./install.sh firefox` and reinstall the add-on.
 
 **Still stuck?**
 See the per-component notes in

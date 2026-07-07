@@ -8,9 +8,9 @@
 # lookup required.
 #
 # Usage:
-#   ./setup.sh            # register native host for both Chrome and Firefox (best-effort)
-#   ./setup.sh chrome     # Chrome only
-#   ./setup.sh firefox    # Firefox only
+#   ./install.sh            # register native host for both Chrome and Firefox (best-effort)
+#   ./install.sh chrome     # Chrome only
+#   ./install.sh firefox    # Firefox only
 #
 set -euo pipefail
 
@@ -19,8 +19,8 @@ EXTENSION_ID="ekhohmoicafiheojabajlkkfibppajic"
 FIREFOX_EXTENSION_ID="hyperfetch@hyperfetch.local"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 TARGET="${1:-both}"
+
 case "$TARGET" in
   chrome|firefox|both) ;;
   *)
