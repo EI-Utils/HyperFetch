@@ -33,6 +33,11 @@ single-stream download instead.
 
 ## 🧩 1. Use the browser extension
 
+> ⚠️ **Important:** Keep this project folder in a permanent location after running
+> `install.sh` / `install.bat`. The native-host registration stores absolute paths to
+> files inside this directory. If you move or delete it later, **Test Native Host**
+> and accelerated downloads will fail until you reinstall from the new location.
+
 ### <img src="https://cdn.simpleicons.org/googlechrome/4285F4" alt="Chrome" width="14" height="14" style="vertical-align: middle;"> Chrome extension
 
 
