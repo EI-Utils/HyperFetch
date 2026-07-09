@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chrome Native Messaging host for HyperFetch.
+Browser Native Messaging host for HyperFetch.
 """
 
 import base64
@@ -20,17 +20,27 @@ from typing import Dict, Optional
 BASE_DIR = Path(__file__).resolve().parent.parent
 DOWNLOADER_PATH = BASE_DIR / "downloader"
 
+# Fixed extension IDs from extension manifests.
+HOST_NAME = "com.hyperfetch.host"
+EXTENSION_ID = "ekhohmoicafiheojabajlkkfibppajic"
+EDGE_EXTENSION_ID = "janjffcbkocmjgakkoapljjgfbmppilb"
+FIREFOX_EXTENSION_ID = "hyperfetch@hyperfetch.local"
+
 
 def _detect_browser() -> str:
     """Identify the launching browser from the args it passes to the native host.
 
-    Chrome/Chromium pass the calling extension's origin as argv[1] (e.g.
+    Chromium-based browsers pass the calling extension's origin as argv[1] (e.g.
     "chrome-extension://<id>/"). Firefox passes the app-manifest path as argv[1] and the
-    add-on's gecko id (which contains "@", e.g. "hyperfetch@hyperfetch.local") as argv[2].
-    This lets Chrome and Firefox — which launch the same host script — keep separate state.
+    add-on gecko id (which contains "@", e.g. "hyperfetch@hyperfetch.local") as argv[2].
+    This lets Chrome, Edge, and Firefox keep separate state while sharing one host script.
     """
     for arg in sys.argv[1:]:
         if arg.startswith("chrome-extension://") or arg.startswith("chromium-extension://"):
+            origin = arg.split("://", 1)[1]
+            extension_id = origin.strip("/").split("/", 1)[0]
+            if extension_id == EDGE_EXTENSION_ID:
+                return "edge"
             return "chrome"
     for arg in sys.argv[1:]:
         if "@" in arg:  # Firefox gecko extension id
@@ -40,17 +50,9 @@ def _detect_browser() -> str:
 
 BROWSER = _detect_browser()
 
-# Keep download history separate per browser so the Chrome and Firefox extensions (which both
+# Keep download history separate per browser so the Chrome, Edge, and Firefox extensions (which
 # launch this same host) don't share or clobber each other's history.
 HISTORY_FILE = Path(__file__).resolve().parent / f".download_history.{BROWSER}.json"
-
-# Fixed extension ID, derived from the public "key" in chrome-extension/manifest.json.
-# Because the ID is stable, this host can register / repair its own manifest on launch,
-# so users normally only need to run setup.sh once (or never, after the first launch).
-HOST_NAME = "com.hyperfetch.host"
-EXTENSION_ID = "ekhohmoicafiheojabajlkkfibppajic"
-# Firefox add-on id from firefox-extension/manifest.json (browser_specific_settings.gecko.id).
-FIREFOX_EXTENSION_ID = "hyperfetch@hyperfetch.local"
 
 write_lock = threading.Lock()
 downloads_lock = threading.Lock()
@@ -65,8 +67,9 @@ stream_downloads_lock = threading.Lock()
 def _native_host_manifest_dir() -> Path:
     """Return the browser's Native Messaging hosts directory for the current user/OS.
 
-    The location differs per browser: Chrome uses a google-chrome config dir, Firefox uses a
-    .mozilla dir. This keeps each browser's self-heal writing only to its own manifest.
+    The location differs per browser: Chrome uses a google-chrome config dir, Edge uses a
+    microsoft-edge config dir, and Firefox uses a .mozilla dir. This keeps each browser's
+    self-heal writing only to its own manifest.
     """
     if BROWSER == "firefox":
         if sys.platform == "darwin":
@@ -78,6 +81,20 @@ def _native_host_manifest_dir() -> Path:
                 / "NativeMessagingHosts"
             )
         return Path.home() / ".mozilla" / "native-messaging-hosts"
+
+    if BROWSER == "edge":
+        if sys.platform == "darwin":
+            return (
+                Path.home()
+                / "Library"
+                / "Application Support"
+                / "Microsoft Edge"
+                / "NativeMessagingHosts"
+            )
+
+        config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        base = Path(config_home) if config_home else (Path.home() / ".config")
+        return base / "microsoft-edge" / "NativeMessagingHosts"
 
     if sys.platform == "darwin":
         return (
@@ -99,7 +116,7 @@ def _self_heal_manifest() -> None:
 
     The browser launches this process, so on every launch we can repair the manifest if it
     is missing, points at an old path (e.g. the repo moved), or lost the extension ID.
-    This keeps the native host working without re-running setup. Chrome and Firefox use
+    This keeps the native host working without re-running setup. Chrome, Edge, and Firefox use
     different manifest schemas (allowed_origins vs allowed_extensions) and different
     directories, so we only repair the manifest belonging to the browser that launched us.
     Failures are silent: the host must never write to stdout, and a missing manifest simply
@@ -117,6 +134,8 @@ def _self_heal_manifest() -> None:
             desired["allowed_extensions"] = [FIREFOX_EXTENSION_ID]
         elif BROWSER == "chrome":
             desired["allowed_origins"] = [f"chrome-extension://{EXTENSION_ID}/"]
+        elif BROWSER == "edge":
+            desired["allowed_origins"] = [f"chrome-extension://{EDGE_EXTENSION_ID}/"]
         else:
             # Unknown launcher — don't guess which manifest to (re)write.
             return

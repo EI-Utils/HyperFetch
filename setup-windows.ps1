@@ -1,24 +1,25 @@
 <#
     HyperFetch one-step setup for Windows.
 
-    Unlike Linux/macOS, Chrome and Firefox on Windows do NOT read native messaging
+    Unlike Linux/macOS, Chromium browsers and Firefox on Windows do NOT read native messaging
     host manifests from a folder. They look up the manifest path in the Windows
     Registry, and they cannot launch a .py file directly. This script therefore:
 
       1. Writes a small .bat wrapper that runs native_host.py with your Python.
       2. Writes the native host manifest JSON (path -> the .bat wrapper).
-      3. Registers the manifest in HKCU so Chrome/Firefox can find it.
+    3. Registers the manifest in HKCU so Chrome/Edge/Firefox can find it.
 
     Usage (from PowerShell, in this folder):
-      powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1           # both
-      powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 chrome    # Chrome only
-      powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 firefox   # Firefox only
+    powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1            # all browsers
+    powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 chrome     # Chrome only
+    powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 edge       # Edge only
+    powershell -ExecutionPolicy Bypass -File .\setup-windows.ps1 firefox    # Firefox only
 
     Or just double-click setup-windows.bat.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('chrome', 'firefox', 'both')]
+    [ValidateSet('chrome', 'edge', 'firefox', 'both')]
     [string]$Target = 'both'
 )
 
@@ -26,6 +27,7 @@ $ErrorActionPreference = 'Stop'
 
 # Fixed extension IDs (match the extension manifests).
 $ExtensionId        = 'ekhohmoicafiheojabajlkkfibppajic'
+$EdgeExtensionId    = 'janjffcbkocmjgakkoapljjgfbmppilb'
 $FirefoxExtensionId = 'hyperfetch@hyperfetch.local'
 $HostName           = 'com.hyperfetch.host'
 
@@ -82,6 +84,7 @@ function Install-Host {
 }
 
 $didChrome  = $false
+$didEdge    = $false
 $didFirefox = $false
 
 if ($Target -eq 'chrome' -or $Target -eq 'both') {
@@ -98,6 +101,23 @@ if ($Target -eq 'chrome' -or $Target -eq 'both') {
     Install-Host -ManifestPath $manifestPath -Manifest $manifest `
         -RegistryKey "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName"
     $didChrome = $true
+    Write-Host ""
+}
+
+if ($Target -eq 'edge' -or $Target -eq 'both') {
+    Write-Host "== Edge =="
+    Write-Host "  Extension ID: $EdgeExtensionId"
+    $manifest = @{
+        name            = $HostName
+        description     = 'Native messaging host for HyperFetch'
+        path            = $WrapperBat
+        type            = 'stdio'
+        allowed_origins = @("chrome-extension://$EdgeExtensionId/")
+    }
+    $manifestPath = Join-Path $NativeHostDir 'com.hyperfetch.host.edge.win.json'
+    Install-Host -ManifestPath $manifestPath -Manifest $manifest `
+        -RegistryKey "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$HostName"
+    $didEdge = $true
     Write-Host ""
 }
 
@@ -128,6 +148,16 @@ if ($didChrome) {
     Write-Host "  3. Click 'Load unpacked' and select: $(Join-Path $ScriptDir 'chrome-extension')"
     Write-Host "  4. Confirm the ID shows as: $ExtensionId"
     Write-Host "  5. Fully quit Chrome (all windows) and reopen it, then click 'Test Native Host'"
+}
+
+if ($didEdge) {
+    Write-Host ""
+    Write-Host "Next steps in Edge:"
+    Write-Host "  1. Open edge://extensions/"
+    Write-Host "  2. Enable Developer mode"
+    Write-Host "  3. Click 'Load unpacked' and select: $(Join-Path $ScriptDir 'edge-extension')"
+    Write-Host "  4. Confirm the ID shows as: $EdgeExtensionId"
+    Write-Host "  5. Fully quit Edge (all windows) and reopen it, then click 'Test Native Host'"
 }
 
 if ($didFirefox) {

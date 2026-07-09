@@ -7,6 +7,7 @@
 <p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.7%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
   <img alt="Chrome" src="https://img.shields.io/badge/Chrome-88%2B-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white">
+  <img alt="Edge" src="https://img.shields.io/badge/Edge-120%2B-0078D4?style=for-the-badge&logo=microsoftedge&logoColor=white">
   <img alt="Firefox" src="https://img.shields.io/badge/Firefox-121%2B-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-2EA44F?style=for-the-badge&logo=linux&logoColor=white">
   <img alt="Threads" src="https://img.shields.io/badge/Threads-up%20to%2032-FF6B00?style=for-the-badge&logo=speedtest&logoColor=white">
@@ -16,7 +17,7 @@
 
 You can use HyperFetch two ways:
 
-1. 🧩 [Use the browser extension](#1-use-the-browser-extension) — one-click acceleration from [Chrome](#chrome-extension) or [Firefox](#firefox-extension).
+1. 🧩 [Use the browser extension](#1-use-the-browser-extension) — one-click acceleration from [Chrome](#chrome-extension), [Edge](#edge-extension), or [Firefox](#firefox-extension).
 2. 💻 [Use the `downloader` utility from the command line](#2-use-the-downloader-utility-command-line) — scriptable, headless.
 
 Large downloads (over 100 MB by default) are split across several parallel connections, so
@@ -27,7 +28,7 @@ single-stream download instead.
 
 - 🐍 Python 3.7+
 - 🖥️ Linux, macOS, or Windows
-- 🌐 For the extension: Chrome 88+ or Firefox 121+
+- 🌐 For the extension: Chrome 88+, Edge 120+, or Firefox 121+
 
 ## ⚡ Quick start
 
@@ -51,14 +52,14 @@ connections.
    **Linux / macOS:**
 
    ```bash
-   ./install.sh            # Sets up both Chrome and Firefox
+  ./install.sh            # Sets up Chrome, Edge, and Firefox
    ./install.sh chrome     # Chrome only
    ```
 
    **Windows** (`install.bat`, or run in a terminal):
 
    ```bat
-   install.bat            :: Sets up both Chrome and Firefox
+  install.bat            :: Sets up Chrome, Edge, and Firefox
    install.bat chrome     :: Chrome only
    ```
 
@@ -89,9 +90,50 @@ connections.
 
 ---
 
+### <img src="https://cdn.simpleicons.org/microsoftedge/0078D4" alt="Edge" width="14" height="14" style="vertical-align: middle;"> Edge extension
+
+The Edge extension has the same behavior as Chrome: it intercepts large downloads and speeds
+them up with parallel connections.
+
+#### 📥 Install
+
+1. Register the helper (once):
+
+  **Linux / macOS:**
+
+  ```bash
+  ./install.sh          # Sets up Chrome, Edge, and Firefox
+  ./install.sh edge     # Edge only
+  ```
+
+  **Windows** (`install.bat`, or run in a terminal):
+
+  ```bat
+  install.bat          :: Sets up Chrome, Edge, and Firefox
+  install.bat edge     :: Edge only
+  ```
+
+2. Open `edge://extensions/`.
+3. Turn on **Developer mode**.
+4. Click **Load unpacked** and select the `edge-extension` folder.
+5. Confirm the **ID** on the HyperFetch card is `janjffcbkocmjgakkoapljjgfbmppilb`.
+
+> **Windows:** fully quit Edge (close every window) and reopen it after registering the
+> helper — Edge only reads the native-host registry entry at startup.
+
+#### 🚀 Usage
+
+1. Click the HyperFetch icon → **Settings** tab and adjust anything you like.
+2. Click **Test Native Host** to confirm it's connected.
+3. Start any large download — HyperFetch offers to speed it up and shows live progress.
+
+> Having trouble? See [Troubleshooting](#-troubleshooting).
+
+---
+
 ### <img src="https://cdn.simpleicons.org/firefoxbrowser/FF7139" alt="Firefox" width="14" height="14" style="vertical-align: middle;"> Firefox extension
 
-The Firefox extension works just like the Chrome one — it detects large downloads and speeds
+The Firefox extension works just like the Chrome/Edge ones — it detects large downloads and speeds
 them up with parallel connections.
 
 #### 📥 Install
@@ -101,14 +143,14 @@ them up with parallel connections.
    **Linux / macOS:**
 
    ```bash
-   ./install.sh            # Sets up both Chrome and Firefox
+  ./install.sh            # Sets up Chrome, Edge, and Firefox
    ./install.sh firefox    # Firefox only
    ```
 
    **Windows** (`install.bat`, or run in a terminal):
 
    ```bat
-   install.bat            :: Sets up both Chrome and Firefox
+  install.bat            :: Sets up Chrome, Edge, and Firefox
    install.bat firefox    :: Firefox only
    ```
 
@@ -269,7 +311,7 @@ On Windows the setup works differently from Linux/macOS, so use `install.bat`
   file directly. `install.bat` handles all of this for you.
 - **What it does:** finds your Python, writes a small `native-host\run_native_host.bat`
   wrapper, writes the manifest JSON, and registers it under
-  `HKEY_CURRENT_USER` for Chrome and Firefox.
+  `HKEY_CURRENT_USER` for Chrome, Edge, and Firefox.
 - **No admin required** — everything is written to your own user account.
 - **`install.bat` vs `setup-windows.ps1`:** the `.bat` is just a launcher that runs
   the `.ps1`, which does the real work. **Keep both files** — deleting the `.ps1` would
@@ -298,9 +340,15 @@ That's expected and the file still downloads correctly.
 - Make sure the extension **ID** is `ekhohmoicafiheojabajlkkfibppajic`.
 - Reload the extension from `chrome://extensions/`.
 
+**Edge — "Native host not connecting" / Test Native Host fails?**
+
+- Re-run `./install.sh edge`.
+- Make sure the extension **ID** is `janjffcbkocmjgakkoapljjgfbmppilb`.
+- Reload the extension from `edge://extensions/`.
+
 **Windows — "Native host not connecting" / Test Native Host fails?**
 
-- Re-run `install.bat chrome` (or `firefox`).
+- Re-run `install.bat chrome` (or `edge` / `firefox`).
 - **Fully quit the browser** (close every window — check the tray) and reopen it; the
   registry entry is only read at startup.
 - Make sure Python is installed and on `PATH`: run `python --version` in a new terminal.
@@ -322,5 +370,6 @@ That's expected and the file still downloads correctly.
 **Still stuck?**
 See the per-component notes in
 [chrome-extension/README.md](chrome-extension/README.md),
+[edge-extension/README.md](edge-extension/README.md),
 [firefox-extension/README.md](firefox-extension/README.md), and
 [native-host/README.md](native-host/README.md).

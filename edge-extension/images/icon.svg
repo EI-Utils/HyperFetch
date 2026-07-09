@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4facf7"/>
+      <stop offset="1" stop-color="#1e6fd6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded square background -->
+  <rect x="4" y="4" width="120" height="120" rx="28" ry="28" fill="url(#bg)"/>
+
+  <!-- speed / motion lines (fast) -->
+  <g fill="#ffffff" opacity="0.85">
+    <rect x="18" y="40" width="26" height="8" rx="4"/>
+    <rect x="12" y="60" width="34" height="8" rx="4"/>
+    <rect x="18" y="80" width="26" height="8" rx="4"/>
+  </g>
+
+  <!-- download arrow -->
+  <g fill="#ffffff">
+    <rect x="72" y="26" width="16" height="42" rx="8"/>
+    <path d="M80 96 L56 66 h48 Z"/>
+  </g>
+
+  <!-- download tray / baseline -->
+  <rect x="52" y="102" width="56" height="10" rx="5" fill="#ffffff"/>
+</svg>
